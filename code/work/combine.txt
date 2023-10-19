@@ -1,0 +1,474 @@
+module clock_divider (
+							 // Inputs	
+							 device_clock,
+							 rst,
+                      // Outputs
+                      clk_25MHz,
+							 clk_20Hz,
+							 clk_500Hz);
+
+	 output reg				              clk_25MHz;
+	 output reg								  clk_20Hz;
+	 output reg								  clk_500Hz;
+
+	 
+	 input				              device_clock;
+	 input				              rst;
+    // Counter variables
+    reg [25:0] cnt25M;
+	 reg [25:0] cnt20;
+    reg [25:0] cnt500;
+	 
+    // Division factor for each output clock
+
+    integer							    		DIV25M;
+	 integer										DIV20;
+	 integer										DIV500;
+			
+    // Main logic
+    always @(posedge device_clock or posedge rst) begin
+		if (rst) begin
+	      clk_25MHz <= 1;
+			cnt25M <= 0;
+		   DIV25M <= 2;
+			
+			clk_20Hz <= 1;
+			cnt20 <= 0;
+			DIV20 <= 1250000;
+			
+			clk_500Hz <= 1;
+			cnt500 <= 0;
+			DIV500 <= 50000;
+			//DIV1 <= 25000000;
+		   //DIV60 <= 833333;
+		end
+		else begin
+			cnt25M <= cnt25M + 1;
+			cnt20 <= cnt20 + 1;
+			cnt500 <= cnt500 + 1;
+		 
+		 
+			if (cnt25M == DIV25M - 1) begin
+			  cnt25M <= 0;
+			  clk_25MHz <= ~clk_25MHz;
+			end
+			
+			if (cnt20 == DIV20 - 1) begin
+			  cnt20 <= 0;
+			  clk_20Hz <= ~clk_20Hz;
+			end
+			
+			if (cnt500 == DIV500 - 1) begin
+			  cnt500 <= 0;
+			  clk_500Hz <= ~clk_500Hz;
+			end
+		 
+		end
+    end
+
+endmodule
+`timescale 1ns / 1ps
+
+module debouncer(clk, btn, btn_state);
+	// inputs/outputs
+	input clk, btn;
+	output btn_state;
+	
+	parameter CLK_MAX = 32'd5000000;
+	
+	// assign outputs
+	reg btn_state_reg = 0;
+	assign btn_state = btn_state_reg;
+	
+	reg[31:0] counter;
+	
+	// determines the state of the button
+	always @ (posedge clk) begin
+		if (btn == 0) begin
+			counter <= 0;
+			btn_state_reg <= 0;
+		end
+		else begin
+			counter <= counter + 1'b1;
+			// means button has been down for awhile
+			if (counter == CLK_MAX) begin
+				btn_state_reg <= 1;
+				counter <= 0;
+			end
+		end	
+	end
+	
+endmodule
+`timescale 1ns / 1ps
+module gamecontroller(clk, rst, sel, sync_h, sync_v, vgaRed, vgaGreen, vgaBlue, LED_out, Anode_Activate);
+  input clk, rst, sel;
+  output sync_h, sync_v, vgaRed, vgaGreen, vgaBlue;   
+  output wire [6:0] LED_out;
+  output wire [3:0] Anode_Activate;
+	
+  reg[2:0] vgaRed, vgaGreen;
+  reg[1:0] vgaBlue;
+  
+  wire clk_25;
+  wire clk_20Hz;
+  wire clk_500Hz;
+  
+  wire sync_h_out;
+	wire sync_v_out;
+  wire vidon;
+	 
+	wire [10:0] pixel_x;
+	wire [10:0] pixel_y;
+	 
+	wire [2:0] im_game_r;
+	wire [2:0] im_game_g;
+	wire [1:0] im_game_b;
+  
+  wire rst_st, sel_st;
+	 
+	wire [10:0] score;
+	
+	assign sync_h = ~sync_h_out;
+	assign sync_v = ~sync_v_out;
+  
+  always @ (posedge clk_25) begin	
+    if (vidon) begin
+			vgaRed[2:0] = im_game_r;
+			vgaGreen[2:0] = im_game_g;
+			vgaBlue[1:0] = im_game_b;
+    end
+    else begin
+      vgaRed[2:0] = 3'b000;
+			vgaGreen[2:0] = 3'b000;
+			vgaBlue[1:0] = 2'b00;
+    end
+	end
+  
+  gamelogic game(.clk(clk),
+					  .clk_20Hz(clk_20Hz),
+						 .pixel_x(pixel_x),
+						 .pixel_y(pixel_y),
+						 .rst(rst_st),
+						 .sel(sel_st),
+						 .red(im_game_r),
+						 .green(im_game_g),
+						 .blue(im_game_b),
+						 .score(score));
+  
+  vga vgacontrol(.refresh_clk(clk_25),
+      .rst(rst_st),
+      .sync_h(sync_h_out),
+      .sync_v(sync_v_out),
+      .pixel_x(pixel_x),
+      .pixel_y(pixel_y),
+      .vidon(vidon));
+      
+  debouncer rst_button (.clk(clk),
+                        .btn(rst),
+                        .btn_state(rst_st));
+                        
+  debouncer sel_button (.clk(clk),
+                        .btn(sel),
+                        .btn_state(sel_st));
+								
+	
+   clock_divider clkDiv(.device_clock(clk),
+								.rst(rst_st),
+								.clk_25MHz(clk_25),
+								.clk_20Hz(clk_20Hz),
+								.clk_500Hz(clk_500Hz)
+								);
+								
+	Seven_segment_LED_Display_Controller led (
+								.clk_500Hz(clk_500Hz),
+								.score(score),
+								.rst(rst_st),
+								.Anode_Activate(Anode_Activate),
+								.LED_out(LED_out));
+												
+
+endmodule
+`timescale 1ns / 1ps
+
+module gamelogic(clk, clk_20Hz, pixel_x, pixel_y, rst, sel, red, green, blue, score);
+  // input/output declarations
+  input clk, clk_20Hz, rst, sel;
+  input [10:0] pixel_x, pixel_y;
+  output red, green, blue, score;
+  
+  // reg and size declarations
+  reg [2:0] red, green;
+  reg [1:0] blue;
+  
+  //player box
+  parameter player_base = 400;
+  parameter player_left = 100;
+  parameter player_width = 20;
+  parameter player_height = 40;
+  parameter jump_height = 45;
+  
+  
+  //obstacle
+  parameter obstacle_width = 20;
+  parameter obstacle_height = 20;
+  parameter obstacle_x_base = 500;
+  
+  parameter [10:0] obstacle_pos = 596; 
+  //collision detection
+  
+  reg [10:0] obstacle_x_change;
+  reg [10:0] obstacle_y;
+  reg signed [10:0] player_bottom;
+  reg pause;
+  reg [10:0] score;
+  
+  reg [5:0] idx;
+  reg jump_state;
+  reg [10:0] cur_jump;
+  reg rising;
+
+	always @ (posedge clk_20Hz or posedge rst) begin
+		if (rst) begin
+			obstacle_x_change = 0;
+			score = 0;
+			
+			cur_jump = 0;
+			rising = 0;
+			jump_state = 0;
+			obstacle_y = 400;
+			idx = 0;
+			end
+		
+		else begin
+		
+			if(obstacle_x_change == 500) begin
+				obstacle_x_change = 0;
+				score = score + 1;
+				
+				if(obstacle_pos[idx] == 0) begin
+					obstacle_y = 400;
+				end
+				else begin
+					obstacle_y = 350;
+				end
+				
+				if(idx < 10) begin
+					idx = idx + 1;
+				end
+				else begin
+					idx = 0;
+				end
+
+			end
+			else if (!pause) begin 
+				obstacle_x_change = obstacle_x_change + 5;
+			end
+			
+			if(sel && !pause && !jump_state) begin
+				jump_state = 1;
+				rising = 1;
+			end	
+			else if(jump_state && !pause) begin
+
+				if(rising) begin
+					cur_jump = cur_jump + 3;
+				end
+				else begin
+					cur_jump = cur_jump - 3;
+				end
+				
+				if(cur_jump >= 48) begin
+					rising = 0;
+				end
+				
+				if (!rising && !cur_jump) begin
+					jump_state = 0;
+					cur_jump = 0;
+				end
+			end
+			
+		end
+
+		
+	end
+
+  always @ (posedge clk) begin
+		//jump stuff
+		if(rst) begin
+			pause = 0;
+		end
+		
+		player_bottom <= player_base - cur_jump;
+
+		if((obstacle_x_base - obstacle_x_change) <= (player_left + player_width)
+			&& ((obstacle_x_base - obstacle_x_change + obstacle_width) > player_left)
+			&& (player_bottom >= obstacle_y - obstacle_height)
+			&& ((player_bottom - player_height) < obstacle_y)) begin
+			pause = 1;
+		end
+
+			
+		//graphics
+		if(pixel_y > 400) begin // grass
+		  red[2:0] = 3'b000;
+        green[2:0] = 3'b111;
+        blue[1:0] = 2'b01;
+		end
+		else if ((pixel_y < player_bottom && pixel_y > (player_bottom-player_height))
+					&& (pixel_x > player_left && pixel_x < (player_left+player_width))) begin
+		  red[2:0] = 3'b000;
+        green[2:0] = 3'b000;
+        blue[1:0] = 2'b00;		
+		end
+		else if ((pixel_y < obstacle_y && pixel_y > (obstacle_y-obstacle_height))
+					&& (pixel_x > (obstacle_x_base - obstacle_x_change)
+					&& pixel_x < ((obstacle_x_base - obstacle_x_change) + obstacle_width))) begin // obstacle
+		  red[2:0] = 3'b111;
+		  green[2:0] = 3'b000;
+		  blue[1:0] = 2'b00;
+		end 
+		else if(pause) begin // lost sky
+			red[2:0] = 3'b001;
+        green[2:0] = 3'b000;
+        blue[1:0] = 2'b00;
+		end
+		else begin // sky
+			red[2:0] = 3'b000;
+        green[2:0] = 3'b001;
+        blue[1:0] = 2'b11;
+		end
+
+	end
+
+endmodule
+module Seven_segment_LED_Display_Controller(
+
+    //Inputs
+    input clk_500Hz, // 500 hz clock
+    input [7:0] score,
+	 input rst,
+    
+    //Outputs
+    output reg [3:0] Anode_Activate, // anode signals of the 7-segment LED display
+    output reg [6:0] LED_out// cathode patterns of the 7-segment LED display
+    );
+    
+    reg [3:0] LED_BCD;
+             // the first 2 MSB bits for creating 4 LED-activating signals with 2.6ms digit period
+    reg [1:0] LED_activating_counter; 
+                 // count     0    ->  1  ->  2  ->  3
+              // activates    LED1    LED2   LED3   LED4
+             // and repeat
+
+    always @(posedge clk_500Hz or posedge rst)
+    begin 
+        if(rst==1) begin
+            LED_activating_counter <= 2'b00;
+        end else begin
+				if(LED_activating_counter == 2'b11) begin
+					LED_activating_counter <= 2'b00;
+				end else begin
+					LED_activating_counter <= LED_activating_counter + 1;
+				end
+			end
+    end 
+	 
+ // anode activating signals for 4 LEDs, digit period of 2.6ms
+    // decoder to generate anode signals 
+    always @(*)
+    begin
+        case(LED_activating_counter)
+        2'b00: begin
+            Anode_Activate = 4'b0111; 
+            // activate LED1 and Deactivate LED2, LED3, LED4
+            //leftmost LED
+            LED_BCD = (score/1000) % 10;
+            // the first digit of the 16-bit number
+              end
+        2'b01: begin
+            Anode_Activate = 4'b1011; 
+            // activate LED2 and Deactivate LED1, LED3, LED4
+            LED_BCD = (score/100) % 10;
+            // the second digit of the 16-bit number
+              end
+        2'b10: begin
+            Anode_Activate = 4'b1101; 
+            // activate LED3 and Deactivate LED2, LED1, LED4
+            LED_BCD = (score/10) % 10;
+            // the third digit of the 16-bit number
+                end
+        2'b11: begin
+            Anode_Activate = 4'b1110; 
+            // activate LED4 and Deactivate LED2, LED3, LED1
+            //rightmost LED
+            LED_BCD = score % 10;
+            // the fourth digit of the 16-bit number    
+               end
+        endcase
+    end
+    // Cathode patterns of the 7-segment LED display 
+    always @(*)
+    begin		
+			 case(LED_BCD)
+			  4'b0000: LED_out = 7'b1000000; // "0"  
+			  4'b0001: LED_out = 7'b1111001; // "1"	
+			  4'b0010: LED_out = 7'b0100100; // "2" 
+			  4'b0011: LED_out = 7'b0110000; // "3" 
+			  4'b0100: LED_out = 7'b0011001; // "4" 
+			  4'b0101: LED_out = 7'b0010010; // "5" 
+			  4'b0110: LED_out = 7'b0000010; // "6" 
+			  4'b0111: LED_out = 7'b1111000; // "7" 
+			  4'b1000: LED_out = 7'b0000000; // "8"     
+			  4'b1001: LED_out = 7'b0010000; // "9"
+			  default: LED_out = 7'b1000000; // "0"
+			  endcase
+    end
+endmodule
+`timescale 1ns / 1ps
+
+module vga(refresh_clk, rst, sync_h, sync_v, pixel_x, pixel_y, vidon);
+  input refresh_clk, rst;
+  output sync_h, sync_v, pixel_x, pixel_y, vidon;
+  
+  reg vidon;
+  wire sync_h, sync_v;
+  reg [10:0] pixel_x, pixel_y;
+  
+  parameter h_pixels = 800;
+  parameter v_lines = 521;
+  parameter h_pulse = 96;
+  parameter v_pulse = 2;
+  parameter h_bp = 144;
+  parameter h_fp= 784;
+  parameter v_bp = 31;
+  parameter v_fp = 511;
+  
+  reg [10:0] vertical_c;
+  reg [10:0] horizontal_c;
+  
+  always @ (posedge refresh_clk) begin
+	if (horizontal_c < h_pixels - 1)
+	  horizontal_c <= horizontal_c + 1;
+	else begin
+	  horizontal_c <= 0;
+	  if (vertical_c < v_lines - 1) 
+		 vertical_c <= vertical_c + 1;
+	  else
+		 vertical_c <= 0;
+	end
+	 if (vertical_c >= v_bp && vertical_c < v_fp && horizontal_c >= h_bp && horizontal_c < h_fp) begin
+      vidon <= 1;
+      pixel_x <= horizontal_c - h_bp;
+      pixel_y <= vertical_c - v_bp;
+    end
+    else begin
+      pixel_x <= 0;
+      pixel_y <= 0;
+		vidon <= 0;
+	 end
+  end
+  
+  assign sync_h = (horizontal_c < h_pulse) ? 0:1;
+  assign sync_v = (vertical_c < v_pulse) ? 0:1;
+
+endmodule
